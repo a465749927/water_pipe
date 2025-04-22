@@ -1,0 +1,62 @@
+
+node:
+  id: "node1"
+  listen_address: "0.0.0.0:1080"
+  admin_address: "127.0.0.1:8080"
+
+secure:
+  method: "tls"  # Choose encryption method: "tls", "aes", or "none"
+  
+  tls:
+    cert_file: "./certs/node1.pem"
+    key_file: "./certs/node1.key"
+    ca_file: "./certs/ca.pem"
+  
+  aes:
+    key_file: "./certs/aes.key"
+  
+  # No additional configuration needed for method: "none"
+
+socks5:
+  enabled: true
+  auth:
+    method: "none"
+
+forwarding_policies:
+  - name: "direct_policy"
+    match:
+      destination_cidr: "10.0.0.0/8"
+    action:
+      type: "direct"
+  
+  - name: "next_hop_policy"
+    match:
+      destination_cidr: "0.0.0.0/0"
+    action:
+      type: "forward"
+      next_hop: "node2"
+
+nodes:
+  - id: "node2"
+    address: "node2.example.com:443"
+    public_key: "./certs/node2_pubkey.pem"
+  
+  - id: "node3"
+    address: "node3.example.com:443"
+    public_key: "./certs/node3_pubkey.pem"
+
+health_check:
+  interval: 5s
+  timeout: 2s
+  failure_threshold: 3
+  recovery_threshold: 2
+  method: "tcp_connect"
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+metrics:
+  enabled: true
+  address: "127.0.0.1:9090"

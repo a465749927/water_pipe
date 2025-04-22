@@ -1,0 +1,195 @@
+package health
+
+import (
+	"context"
+	"net"
+	"sync"
+	"time"
+
+	"water_pipe/config"
+)
+
+type Status int
+
+const (
+	StatusUnknown Status = iota
+	StatusHealthy
+	StatusUnhealthy
+)
+
+type Update struct {
+	NodeID string
+	Status Status
+}
+
+type Checker struct {
+	config         config.HealthCheckConfig
+	nodes          map[string]string // NodeID -> Address
+	statuses       map[string]Status // NodeID -> Status
+	failures       map[string]int    // NodeID -> Consecutive failures
+	recoveries     map[string]int    // NodeID -> Consecutive recoveries
+	subscribers    []chan<- Update
+	subscribersMu  sync.Mutex
+	nodesMu        sync.RWMutex
+}
+
+func NewChecker(cfg config.HealthCheckConfig) (*Checker, error) {
+	return &Checker{
+		config:     cfg,
+		nodes:      make(map[string]string),
+		statuses:   make(map[string]Status),
+		failures:   make(map[string]int),
+		recoveries: make(map[string]int),
+	}, nil
+}
+
+func (c *Checker) RegisterNode(nodeID, address string) {
+	c.nodesMu.Lock()
+	defer c.nodesMu.Unlock()
+
+	c.nodes[nodeID] = address
+	c.statuses[nodeID] = StatusUnknown
+	c.failures[nodeID] = 0
+	c.recoveries[nodeID] = 0
+}
+
+func (c *Checker) UnregisterNode(nodeID string) {
+	c.nodesMu.Lock()
+	defer c.nodesMu.Unlock()
+
+	delete(c.nodes, nodeID)
+	delete(c.statuses, nodeID)
+	delete(c.failures, nodeID)
+	delete(c.recoveries, nodeID)
+}
+
+func (c *Checker) Start(ctx context.Context) {
+	go c.run(ctx)
+}
+
+func (c *Checker) Subscribe() <-chan Update {
+	c.subscribersMu.Lock()
+	defer c.subscribersMu.Unlock()
+
+	ch := make(chan Update, 10)
+	c.subscribers = append(c.subscribers, ch)
+	return ch
+}
+
+func (c *Checker) Unsubscribe(ch <-chan Update) {
+	c.subscribersMu.Lock()
+	defer c.subscribersMu.Unlock()
+
+	for i, sub := range c.subscribers {
+		if sub == ch {
+			c.subscribers = append(c.subscribers[:i], c.subscribers[i+1:]...)
+			close(sub)
+			break
+		}
+	}
+}
+
+func (c *Checker) run(ctx context.Context) {
+	ticker := time.NewTicker(c.config.Interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			c.checkAll(ctx)
+		}
+	}
+}
+
+func (c *Checker) checkAll(ctx context.Context) {
+	c.nodesMu.RLock()
+	nodes := make(map[string]string, len(c.nodes))
+	for id, addr := range c.nodes {
+		nodes[id] = addr
+	}
+	c.nodesMu.RUnlock()
+
+	for id, addr := range nodes {
+		go c.checkNode(ctx, id, addr)
+	}
+}
+
+func (c *Checker) checkNode(ctx context.Context, nodeID, address string) {
+	checkCtx, cancel := context.WithTimeout(ctx, c.config.Timeout)
+	defer cancel()
+
+	var healthy bool
+	switch c.config.Method {
+	case "tcp_connect":
+		healthy = c.checkTCPConnect(checkCtx, address)
+	case "application":
+		healthy = c.checkApplication(checkCtx, address)
+	default:
+		healthy = c.checkTCPConnect(checkCtx, address)
+	}
+
+	c.updateStatus(nodeID, healthy)
+}
+
+func (c *Checker) checkTCPConnect(ctx context.Context, address string) bool {
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return false
+	}
+	conn.Close()
+	return true
+}
+
+func (c *Checker) checkApplication(ctx context.Context, address string) bool {
+	return c.checkTCPConnect(ctx, address)
+}
+
+func (c *Checker) updateStatus(nodeID string, healthy bool) {
+	c.nodesMu.Lock()
+	defer c.nodesMu.Unlock()
+
+	currentStatus, exists := c.statuses[nodeID]
+	if !exists {
+		return
+	}
+
+	if healthy {
+		c.failures[nodeID] = 0
+		c.recoveries[nodeID]++
+	} else {
+		c.failures[nodeID]++
+		c.recoveries[nodeID] = 0
+	}
+
+	var newStatus Status
+	if healthy && (currentStatus != StatusHealthy && c.recoveries[nodeID] >= c.config.RecoveryThreshold) {
+		newStatus = StatusHealthy
+	} else if !healthy && (currentStatus != StatusUnhealthy && c.failures[nodeID] >= c.config.FailureThreshold) {
+		newStatus = StatusUnhealthy
+	} else {
+		return
+	}
+
+	c.statuses[nodeID] = newStatus
+
+	update := Update{
+		NodeID: nodeID,
+		Status: newStatus,
+	}
+	c.notifySubscribers(update)
+}
+
+func (c *Checker) notifySubscribers(update Update) {
+	c.subscribersMu.Lock()
+	defer c.subscribersMu.Unlock()
+
+	for _, sub := range c.subscribers {
+		select {
+		case sub <- update:
+		default:
+		}
+	}
+}

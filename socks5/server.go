@@ -129,8 +129,59 @@ type customDialer struct {
 	handler ConnectionHandler
 }
 
+type tcpAddrConn struct {
+	net.Conn
+	localAddr  *net.TCPAddr
+	remoteAddr *net.TCPAddr
+}
+
+func (c *tcpAddrConn) LocalAddr() net.Addr {
+	return c.localAddr
+}
+
+func (c *tcpAddrConn) RemoteAddr() net.Addr {
+	return c.remoteAddr
+}
+
 func (d *customDialer) Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 	client, server := net.Pipe()
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return nil, fmt.Errorf("invalid address format: %w", err)
+	}
+
+	portNum, err := net.LookupPort(network, port)
+	if err != nil {
+		return nil, fmt.Errorf("invalid port: %w", err)
+	}
+
+	var ip net.IP
+	if host == "" {
+		ip = net.IPv4(127, 0, 0, 1)
+	} else {
+		ips, err := net.LookupIP(host)
+		if err != nil || len(ips) == 0 {
+			ip = net.IPv4(127, 0, 0, 1)
+		} else {
+			ip = ips[0]
+		}
+	}
+
+	remoteAddr := &net.TCPAddr{
+		IP:   ip,
+		Port: portNum,
+	}
+	localAddr := &net.TCPAddr{
+		IP:   net.IPv4(127, 0, 0, 1),
+		Port: 0, // Ephemeral port
+	}
+
+	clientConn := &tcpAddrConn{
+		Conn:       client,
+		localAddr:  localAddr,
+		remoteAddr: remoteAddr,
+	}
 
 	go func() {
 		if err := d.handler(server, addr); err != nil {
@@ -139,5 +190,5 @@ func (d *customDialer) Dial(ctx context.Context, network, addr string) (net.Conn
 		}
 	}()
 
-	return client, nil
+	return clientConn, nil
 }

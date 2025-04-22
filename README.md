@@ -154,6 +154,28 @@ health_check:
 
 Now your browser traffic will be routed through the Water Pipe proxy network, with node-to-node communication encrypted using AES.
 
+### Node as a Next Hop Without SOCKS5
+
+You can configure a node as a next hop for other nodes without enabling SOCKS5. The node will still listen on the configured `listen_address` and accept connections from other nodes in the network.
+
+Example configuration for a node without SOCKS5 that serves as a next hop:
+
+```yaml
+node:
+  id: "relay-node"
+  listen_address: "0.0.0.0:1081"  # Listen on all interfaces on port 1081
+
+secure:
+  method: "aes"  # Use AES encryption for node-to-node communication
+  aes:
+    key_file: "/etc/water_pipe/aes.key"  # Path to AES key file
+
+socks5:
+  enabled: false  # SOCKS5 is disabled
+
+# The rest of the configuration remains the same
+```
+
 ## Documentation
 
 - [Configuration Guide](docs/configuration.md)

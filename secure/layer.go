@@ -102,6 +102,20 @@ func (c *Client) Connect(target string) (net.Conn, error) {
 	return secureConn, nil
 }
 
+func (c *Client) ConnectWithTarget(target string) (net.Conn, error) {
+	conn, err := c.Connect("")
+	if err != nil {
+		return nil, err
+	}
+	
+	if _, err := conn.Write([]byte(target + "\n")); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("failed to write target address: %w", err)
+	}
+	
+	return conn, nil
+}
+
 type tlsWrapper struct {
 	tlsConfig *tls.Config
 }

@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"sync"
 
 	"water_pipe/config"
@@ -95,21 +97,61 @@ func (s *Server) Start() error {
 		s.handleHealthUpdates(statusCh)
 	}()
 
-	if s.socks5Server != nil {
-		listener, err := net.Listen("tcp", s.config.Node.ListenAddress)
-		if err != nil {
-			return fmt.Errorf("failed to listen on %s: %w", s.config.Node.ListenAddress, err)
-		}
-		s.listener = listener
-
-		s.wg.Add(1)
-		go func() {
-			defer s.wg.Done()
-			s.socks5Server.Serve(s.ctx, listener, s.handleConnection)
-		}()
+	// Always listen on the configured address, regardless of SOCKS5 being enabled
+	listener, err := net.Listen("tcp", s.config.Node.ListenAddress)
+	if err != nil {
+		return fmt.Errorf("failed to listen on %s: %w", s.config.Node.ListenAddress, err)
 	}
+	s.listener = listener
+
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		if s.socks5Server != nil {
+			// If SOCKS5 is enabled, use the SOCKS5 server to handle connections
+			s.socks5Server.Serve(s.ctx, listener, s.handleConnection)
+		} else {
+			// If SOCKS5 is not enabled, handle connections directly
+			s.serveConnections(listener)
+		}
+	}()
 
 	return nil
+}
+
+func (s *Server) serveConnections(listener net.Listener) error {
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			select {
+			case <-s.ctx.Done():
+				return s.ctx.Err()
+			default:
+				fmt.Printf("Error accepting connection: %v\n", err)
+				continue
+			}
+		}
+
+		go func(c net.Conn) {
+			defer c.Close()
+			
+			// Read the target address from the connection
+			// For simplicity, we'll use a basic protocol: 
+			// First line of the connection is the target address
+			reader := bufio.NewReader(c)
+			target, err := reader.ReadString('\n')
+			if err != nil {
+				fmt.Printf("Error reading target address: %v\n", err)
+				return
+			}
+			target = strings.TrimSpace(target)
+			
+			// Handle the connection using the existing handleConnection method
+			if err := s.handleConnection(c, target); err != nil {
+				fmt.Printf("Error handling connection: %v\n", err)
+			}
+		}(conn)
+	}
 }
 
 func (s *Server) Stop() error {
@@ -202,7 +244,7 @@ func (s *Server) handleNodeForwarding(clientConn net.Conn, target string, nodeID
 		return fmt.Errorf("node %s is not healthy", nodeID)
 	}
 
-	nodeConn, err := node.Client.Connect(target)
+	nodeConn, err := node.Client.ConnectWithTarget(target)
 	if err != nil {
 		return fmt.Errorf("failed to connect to node %s: %w", nodeID, err)
 	}

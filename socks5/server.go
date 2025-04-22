@@ -68,8 +68,21 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, handler Conne
 		Dial: dialer.Dial,
 	}
 
-	if s.socks5 != nil && s.socks5.Config != nil && len(s.socks5.Config.AuthMethods) > 0 {
-		socks5Config.AuthMethods = s.socks5.Config.AuthMethods
+	if s.config.Auth.Method == "username_password" {
+		creds, err := loadCredentials(s.config.Auth.CredentialsFile)
+		if err != nil {
+			return fmt.Errorf("failed to load credentials: %w", err)
+		}
+
+		credStore := socks5.StaticCredentials{}
+		for _, cred := range creds {
+			credStore[cred.Username] = cred.Password
+		}
+
+		auth := socks5.UserPassAuthenticator{
+			Credentials: credStore,
+		}
+		socks5Config.AuthMethods = []socks5.Authenticator{auth}
 	}
 
 	newServer, err := socks5.New(socks5Config)

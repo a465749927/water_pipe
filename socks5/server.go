@@ -44,15 +44,17 @@ func NewServer(cfg config.SOCKS5Config) (*Server, error) {
 		socks5Config.AuthMethods = []socks5.Authenticator{auth}
 	}
 
+	server := &Server{
+		config: cfg,
+	}
+
 	socks5Server, err := socks5.New(socks5Config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create SOCKS5 server: %w", err)
 	}
 
-	return &Server{
-		config: cfg,
-		socks5: socks5Server,
-	}, nil
+	server.socks5 = socks5Server
+	return server, nil
 }
 
 func (s *Server) Serve(ctx context.Context, listener net.Listener, handler ConnectionHandler) error {
@@ -61,7 +63,21 @@ func (s *Server) Serve(ctx context.Context, listener net.Listener, handler Conne
 	dialer := &customDialer{
 		handler: handler,
 	}
-	s.socks5.Dial = dialer.Dial
+
+	socks5Config := &socks5.Config{
+		Dial: dialer.Dial,
+	}
+
+	if s.socks5 != nil && s.socks5.Config != nil && len(s.socks5.Config.AuthMethods) > 0 {
+		socks5Config.AuthMethods = s.socks5.Config.AuthMethods
+	}
+
+	newServer, err := socks5.New(socks5Config)
+	if err != nil {
+		return fmt.Errorf("failed to create SOCKS5 server with custom dialer: %w", err)
+	}
+
+	s.socks5 = newServer
 
 	for {
 		conn, err := listener.Accept()

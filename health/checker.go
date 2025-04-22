@@ -5,6 +5,7 @@ import (
 	"net"
 	"sync"
 	"time"
+	"unsafe"
 
 	"water_pipe/config"
 )
@@ -80,8 +81,12 @@ func (c *Checker) Unsubscribe(ch <-chan Update) {
 	c.subscribersMu.Lock()
 	defer c.subscribersMu.Unlock()
 
+	chPtr := uintptr((*[2]unsafe.Pointer)(unsafe.Pointer(&ch))[1])
+	
 	for i, sub := range c.subscribers {
-		if sub == ch {
+		subPtr := uintptr((*[2]unsafe.Pointer)(unsafe.Pointer(&sub))[1])
+		
+		if subPtr == chPtr {
 			c.subscribers = append(c.subscribers[:i], c.subscribers[i+1:]...)
 			close(sub)
 			break

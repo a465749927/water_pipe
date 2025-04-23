@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -95,17 +96,54 @@ func (c *Checker) Unsubscribe(ch <-chan Update) {
 }
 
 func (c *Checker) run(ctx context.Context) {
-	ticker := time.NewTicker(c.config.Interval)
-	defer ticker.Stop()
+	checkTicker := time.NewTicker(c.config.Interval)
+	defer checkTicker.Stop()
+	
+	logInterval := 30 * time.Second
+	if c.config.LogInterval > 0 {
+		logInterval = c.config.LogInterval
+	}
+	logTicker := time.NewTicker(logInterval)
+	defer logTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-checkTicker.C:
 			c.checkAll(ctx)
+		case <-logTicker.C:
+			c.logNodeHealth()
 		}
 	}
+}
+
+func (c *Checker) logNodeHealth() {
+	c.nodesMu.RLock()
+	defer c.nodesMu.RUnlock()
+	
+	if len(c.nodes) == 0 {
+		return
+	}
+	
+	fmt.Println("=== Next Hop Node Health Status ===")
+	fmt.Println("Node ID\t\tAddress\t\t\tStatus\t\tLast Check")
+	fmt.Println("---------------------------------------------------------------")
+	
+	for nodeID, address := range c.nodes {
+		status := "Unknown"
+		switch c.statuses[nodeID] {
+		case StatusHealthy:
+			status = "Healthy"
+		case StatusUnhealthy:
+			status = "Unhealthy"
+		}
+		
+		lastCheck := time.Now().Format("2006-01-02 15:04:05")
+		
+		fmt.Printf("%s\t%s\t%s\t%s\n", nodeID, address, status, lastCheck)
+	}
+	fmt.Println("===============================================================")
 }
 
 func (c *Checker) checkAll(ctx context.Context) {

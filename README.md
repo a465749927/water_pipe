@@ -176,6 +176,34 @@ socks5:
 # The rest of the configuration remains the same
 ```
 
+### Node-to-Node Private Protocol
+
+Water Pipe uses a simple private protocol for communication between nodes when a node is configured as a next_hop without SOCKS5 enabled:
+
+1. **Connection Establishment**: The source node establishes a TCP connection to the next_hop node
+2. **Target Address Transmission**: The source node sends the target address as the first line of data, followed by a newline character (`\n`)
+3. **Target Resolution**: The next_hop node reads this first line to determine where to forward the traffic
+4. **Data Forwarding**: After the target address line, all subsequent data is forwarded between the source node and the target address
+
+#### Protocol Format
+
+```
+<target_address>\n<payload_data>
+```
+
+Where:
+- `<target_address>` is in the format `host:port` (e.g., `example.com:80` or `192.168.1.1:443`)
+- `\n` is a newline character (ASCII 10)
+- `<payload_data>` is the actual data to be forwarded to the target
+
+#### Example Flow
+
+```
+[Client] → [Source Node] → "example.com:80\n<actual data>" → [Next Hop Node] → [example.com:80]
+```
+
+This simple protocol allows nodes to communicate efficiently without requiring SOCKS5 to be enabled on every node in the network. The protocol is lightweight and adds minimal overhead to the connection.
+
 ## Documentation
 
 - [Configuration Guide](docs/configuration.md)

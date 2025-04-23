@@ -79,6 +79,7 @@ type HealthCheckConfig struct {
 	FailureThreshold  int           `yaml:"failure_threshold"`
 	RecoveryThreshold int           `yaml:"recovery_threshold"`
 	Method            string        `yaml:"method"` // "tcp_connect" or "application"
+	LogInterval       time.Duration `yaml:"log_interval"` // Interval for logging node health status
 }
 
 type LoggingConfig struct {
@@ -135,6 +136,9 @@ func setDefaults(config *Config) {
 	}
 	if config.HealthCheck.Method == "" {
 		config.HealthCheck.Method = "tcp_connect"
+	}
+	if config.HealthCheck.LogInterval == 0 {
+		config.HealthCheck.LogInterval = 30 * time.Second
 	}
 
 	if config.Logging.Level == "" {
